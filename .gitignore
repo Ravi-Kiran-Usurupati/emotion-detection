@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+
+# Virtual Environment
+venv/
+env/
+
+# Django
+db.sqlite3
+/staticfiles/
+media/
+
+# Model files (optional if you don’t want to upload trained model)
+saved_model/*.keras
+saved_model/*.h5
+saved_model/*.pkl
+saved_model/*.json
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+glove/

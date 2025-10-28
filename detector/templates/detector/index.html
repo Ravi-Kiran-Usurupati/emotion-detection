@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>EmotionSense — Analyze</title>
+
+  <!-- Tailwind + Chart.js -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&family=Raleway:wght@400;700&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --glass-bg: rgba(255,255,255,0.68);
+      --accent1: #7C3AED;
+      --accent2: #06B6D4;
+    }
+    html,body { height:100%; }
+    body {
+      font-family:'Outfit',sans-serif;
+      background: radial-gradient(circle at 15% 20%, #e0e7ff, #f8fafc 40%, #f0f9ff 100%);
+      margin:0;
+      height:100vh;
+      overflow:hidden;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:24px;
+    }
+
+    .glass {
+      width:100%;
+      max-width:1100px;
+      height:80vh;
+      background:var(--glass-bg);
+      border-radius:22px;
+      box-shadow:0 16px 40px rgba(30,41,59,0.18);
+      backdrop-filter:blur(10px);
+      border:1px solid rgba(255,255,255,0.4);
+      display:grid;
+      grid-template-columns: 1fr 0fr;
+      transition:grid-template-columns 450ms cubic-bezier(.2,.9,.2,1);
+      overflow:hidden;
+    }
+    .glass.show-results { grid-template-columns:420px 1fr; }
+
+    .left { padding:28px; display:flex; flex-direction:column; gap:16px; }
+    .input-area { transition:all 450ms cubic-bezier(.2,.9,.2,1); }
+    .glass.show-results .input-area { height:110px; }
+    .input-area textarea {
+      width:100%; min-height:180px; max-height:60vh; resize:none;
+      border-radius:14px; padding:16px;
+      border:1px solid rgba(15,23,42,0.06);
+      box-shadow:0 6px 18px rgba(15,23,42,0.06);
+      transition:all 360ms ease; font-size:15px;
+      font-family:'Raleway',sans-serif;
+    }
+    .glass.show-results .input-area textarea { min-height:86px; height:86px; font-size:14px; }
+
+    .controls { display:flex; gap:12px; align-items:center; }
+
+    .right {
+      padding:22px; border-left:1px dashed rgba(15,23,42,0.05);
+      background:linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.03));
+      opacity:0; transform:translateX(20px);
+      transition:opacity 380ms ease, transform 380ms ease;
+      display:flex; flex-direction:column; gap:12px; min-width:0;
+    }
+    .glass.show-results .right { opacity:1; transform:translateX(0); }
+
+    .chart-wrap { height:260px; display:flex; align-items:center; justify-content:center; width:100%; }
+
+    .legend-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:10px; }
+
+    .pill {
+      background:linear-gradient(90deg,rgba(255,255,255,0.6),rgba(255,255,255,0.45));
+      border-radius:12px; padding:8px 10px;
+      display:flex; gap:8px; align-items:center; justify-content:center;
+      box-shadow:0 6px 18px rgba(2,6,23,0.05);
+      font-weight:600; color:#0f172a;
+    }
+
+    .spinner {
+      width:18px; height:18px; border-radius:50%;
+      border:2px solid rgba(0,0,0,0.08); border-left-color:var(--accent1);
+      animation:spin 0.9s linear infinite;
+    }
+    @keyframes spin { to{transform:rotate(360deg);} }
+
+    @media (max-width:880px){
+      .glass{max-width:940px;height:88vh;grid-template-columns:1fr;}
+      .glass.show-results{grid-template-columns:1fr;}
+      .right{border-left:none;border-top:1px dashed rgba(15,23,42,0.05);}
+      .chart-wrap{height:220px;}
+    }
+  </style>
+</head>
+<body>
+  <div class="glass" id="glass">
+    <div class="left">
+      <div>
+        <h2 class="text-3xl font-bold text-slate-800">EmotionSense <span class="text-indigo-500">AI</span></h2>
+        <p class="text-sm text-slate-600 mt-1">Type any text and see its emotional breakdown instantly.</p>
+      </div>
+
+      <div class="input-area" id="inputArea">
+        <form id="analyzeForm">
+          {% csrf_token %}
+          <textarea id="textInput" name="text" placeholder="e.g., I just got promoted and I’m thrilled! 🎉"></textarea>
+        </form>
+      </div>
+
+      <div class="controls">
+        <button id="analyzeBtn"
+          class="flex items-center gap-3 px-5 py-2 rounded-lg bg-gradient-to-r from-violet-600 to-cyan-500 text-white font-semibold shadow-lg hover:brightness-105 transition disabled:opacity-70">
+          <span id="btnLabel">🔍 Analyze</span>
+          <span id="btnSpinner" class="spinner hidden"></span>
+        </button>
+        <button id="resetBtn"
+          class="px-3 py-2 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 transition">Reset</button>
+      </div>
+    </div>
+
+    <div class="right" id="resultsPanel" aria-hidden="true">
+      <div class="flex items-center justify-between">
+        <div>
+          <div id="summaryTitle" class="text-sm text-slate-600">Results</div>
+          <div id="summarySub" class="text-lg font-semibold text-slate-800">— awaiting analysis —</div>
+        </div>
+        <div id="summaryPill" class="pill">Confidence: <strong id="topConfidence" style="margin-left:8px">—</strong></div>
+      </div>
+
+      <div class="chart-wrap"><canvas id="emotionChart" style="max-width:100%;"></canvas></div>
+
+      <div class="legend-grid" id="legendGrid"></div>
+
+      <div class="mt-3 text-xs text-slate-500" id="rawInfo"></div>
+    </div>
+  </div>
+
+  <script>
+    // Wrap the entire script in a DOMContentLoaded listener
+    // This ensures all elements (like the <canvas>) are loaded before we
+    // try to find them.
+    window.addEventListener('DOMContentLoaded', () => {
+
+      const glass=document.getElementById('glass');
+      const analyzeBtn=document.getElementById('analyzeBtn');
+      const resetBtn=document.getElementById('resetBtn');
+      const btnLabel=document.getElementById('btnLabel');
+      const btnSpinner=document.getElementById('btnSpinner');
+      const textInput=document.getElementById('textInput');
+      const resultsPanel=document.getElementById('resultsPanel');
+      const summarySub=document.getElementById('summarySub');
+      const topConfidence=document.getElementById('topConfidence');
+      const legendGrid=document.getElementById('legendGrid');
+      const rawInfo=document.getElementById('rawInfo');
+      const csrfEl=document.querySelector('[name=csrfmiddlewaretoken]');
+      const csrfToken=csrfEl?csrfEl.value:'';
+      
+      // *** FIX: Define chart variable, but get context LATER ***
+      let chart=null;
+
+      // Twemoji emoji map (These seem to match the dataset labels: joy, sadness, anger, fear, surprise, love)
+      const twemoji = {
+        joy:"https://twemoji.maxcdn.com/v/latest/svg/1f604.svg",
+        sadness:"https://twemoji.maxcdn.com/v/latest/svg/1f622.svg",
+        anger:"https://twemoji.maxcdn.com/v/latest/svg/1f620.svg",
+        fear:"https://twemoji.maxcdn.com/v/latest/svg/1f628.svg",
+        surprise:"https://twemoji.maxcdn.com/v/latest/svg/1f62e.svg",
+        disgust:"https://twemoji.maxcdn.com/v/latest/svg/1f922.svg", // This might not be in your dataset
+        neutral:"https://twemoji.maxcdn.com/v/latest/svg/1f610.svg", // This might not be in your dataset
+        love:"https://twemoji.maxcdn.com/v/latest/svg/1f60d.svg",
+        excitement:"https://twemoji.maxcdn.com/v/latest/svg/1f929.svg", // This might not be in your dataset
+        calm:"https://twemoji.maxcdn.com/v/latest/svg/1f60c.svg" // This might not be in your dataset
+      };
+
+      analyzeBtn.addEventListener('click',async()=>{
+        const txt=textInput.value.trim();
+        if(!txt){flash("Please enter some text",true);return;}
+        enterLoading(true);
+        try{
+          glass.classList.add('show-results');
+          resultsPanel.setAttribute('aria-hidden','false');
+          
+          const res=await fetch("{% url 'predict_emotion' %}",{ 
+            method:'POST',
+            headers:{
+              'Content-Type':'application/json',
+              'X-CSRFToken':csrfToken
+            },
+            body:JSON.stringify({text:txt})
+          });
+          
+          if(!res.ok) {
+            const errData = await res.json().catch(() => ({ error: `Server responded ${res.status}` }));
+            throw new Error(errData.error || `Server responded ${res.status}`);
+          }
+          
+          const data=await res.json();
+          if(!data.predictions||!Array.isArray(data.predictions)||!data.predictions.length){
+            throw new Error(data.error||'No predictions returned');
+          }
+          
+          const preds=data.predictions.map(p=>({emotion:String(p.emotion||'unknown'),percentage:Number(p.percentage)||0}))
+                                  .sort((a,b)=>b.percentage-a.percentage);
+          const top=preds[0];
+          
+          // Use a fallback emoji if the exact emotion isn't in the map
+          const topEmoji = twemoji[top.emotion.toLowerCase()] || 'https://twemoji.maxcdn.com/v/latest/svg/1f914.svg'; // thinking face
+          
+          summarySub.innerHTML=`<img src="${topEmoji}" width="26" style="display:inline;margin-right:6px;vertical-align:middle;"> <span>${capitalize(top.emotion)} is most likely</span>`;
+          topConfidence.textContent=`${top.percentage.toFixed(1)}%`;
+
+          const labels=preds.map(p=>capitalize(p.emotion));
+          const values=preds.map(p=>p.percentage);
+          
+          // *** FIX: Get the context *inside* the click handler ***
+          // This is the most reliable way to ensure the element is ready.
+          const ctx=document.getElementById('emotionChart').getContext('2d');
+          
+          if(chart)chart.destroy();
+          chart=new Chart(ctx,{
+            type:'bar',
+            data:{labels,datasets:[{data:values,backgroundColor:colors(values.length),borderRadius:8}]},
+            options:{
+              responsive:true,maintainAspectRatio:false,
+              plugins:{legend:{display:false},tooltip:{callbacks:{
+                label:ctx=>`${ctx.parsed.y.toFixed(1)}%`
+              }}},
+              scales:{y:{beginAtZero:true,max:100,ticks:{stepSize:10,font:{family:'Outfit'}}},x:{ticks:{font:{family:'Outfit'}}}}
+            }
+          });
+          legendGrid.innerHTML=preds.map(p=>{
+            const img=twemoji[p.emotion.toLowerCase()]|| 'https://twemoji.maxcdn.com/v/latest/svg/1f914.svg';
+            return `
+              <div class="pill">
+                <img src="${img}" width="22" height="22" alt="${p.emotion}">
+                <div style="text-align:left">
+                  <div style="font-size:12px;font-weight:700;">${capitalize(p.emotion)}</div>
+                  <div style="font-size:12px;color:#475569;">${p.percentage.toFixed(1)}%</div>
+                </div>
+              </div>
+            `;
+          }).join('');
+          rawInfo.innerHTML=`Analyzed text length: ${txt.length} chars • Predictions: ${preds.length}`;
+        }catch(e){
+          flash("Error: "+e.message,true);
+          // If the analysis fails, don't keep the panel open
+          glass.classList.remove('show-results');
+          resultsPanel.setAttribute('aria-hidden','true');
+        }finally{
+          enterLoading(false);
+        }
+      });
+
+      resetBtn.addEventListener('click',()=>{
+        glass.classList.remove('show-results');
+        resultsPanel.setAttribute('aria-hidden','true');
+        legendGrid.innerHTML=''; rawInfo.innerHTML='';
+        summarySub.textContent='— awaiting analysis —'; topConfidence.textContent='—';
+        textInput.value=''; if(chart){chart.destroy();chart=null;}
+      });
+
+      function flash(msg,err=false){
+        const prev=document.querySelector('.toast-msg');
+        if(prev) prev.remove();
+        const t=document.createElement('div');
+        t.className='toast-msg';
+        Object.assign(t.style,{position:'absolute',bottom:'34px',left:'50%',transform:'translateX(-50%)',
+          padding:'8px 12px',borderRadius:'8px',fontFamily:'Outfit, sans-serif',
+          background:err?'#fee2e2':'#ecfdf5',color:err?'#991b1b':'#065f46',
+          boxShadow:'0 6px 18px rgba(2,6,23,0.08)'});
+        t.textContent=msg; document.body.appendChild(t);
+        setTimeout(()=>t.remove(),2600);
+      }
+
+      function enterLoading(on){
+        analyzeBtn.disabled=on;
+        btnLabel.classList.toggle('hidden',on);
+        btnSpinner.classList.toggle('hidden',!on);
+      }
+      const capitalize=s=>s?s.charAt(0).toUpperCase()+s.slice(1):s;
+      function colors(n){const p=['#6366F1','#10B981','#F87171','#FBBF24','#A78BFA','#F472B6','#22D3EE','#60A5FA','#FACC15'];return Array.from({length:n},(_,i)=>p[i%p.length]);}
+      
+    });
+  </script>
+</body>
+</html>
+
