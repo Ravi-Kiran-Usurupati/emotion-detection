@@ -2,9 +2,13 @@
 
 A full-stack web application that detects emotions from short text using a deep learning model (TensorFlow/Keras) and serves predictions via a Django web app.
 
-This README explains exactly how to initialize, train, and run the project (commands in order), describes the model and software used, and lists realistic benefits and troubleshooting tips.
+### Preview
+
+![EmotionSense Web App](detector\templates\static\images\pimg.png)
 
 ---
+
+
 
 ## 📋 Quick Contents
 
@@ -170,19 +174,17 @@ import tensorflow as tf
 MODEL_PATH = "saved_model/emotion_model.keras"
 LABEL_ENCODER = "saved_model/label_encoder.pkl"
 
-# Load model (pipeline expects a batch of strings)
 model = tf.keras.models.load_model(MODEL_PATH)
 
-# Load label encoder
 with open(LABEL_ENCODER, "rb") as f:
     le = pickle.load(f)
 
 def predict_texts(texts):
-    # Accept single string or list of strings
+    
     if isinstance(texts, str):
         texts = [texts]
     inp = np.array(texts, dtype=str).reshape(-1, 1)
-    probs = model.predict(inp)                # shape (batch, num_classes)
+    probs = model.predict(inp)             
     top_indices = probs.argmax(axis=1)
     labels = le.inverse_transform(top_indices)
     confidences = probs.max(axis=1)
