@@ -4,7 +4,7 @@ A full-stack web application that detects emotions from short text using a deep 
 
 ### Preview
 
-![EmotionSense Web App](detector\templates\static\images\pimg.png)
+![EmotionSense Web App](detector/templates/static/images/pimg.png)
 
 ---
 
