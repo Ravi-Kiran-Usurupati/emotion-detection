@@ -209,8 +209,6 @@ Note: The detector app's `views.py` includes an example compatible with this pip
 
 ## 🧑‍💻 Author
 
-Chintu — built with Django and TensorFlow
-
-GitHub: https://github.com/Ravi-Kiran-Usurupati
+GitHub Link: https://github.com/Ravi-Kiran-Usurupati
 
 ---
