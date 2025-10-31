@@ -1,13 +1,9 @@
 import os
 import re
 import json
-import zipfile
-import requests
-import io
 import pickle
 import shutil
 from pathlib import Path
-from collections import Counter
 
 import numpy as np
 import pandas as pd
@@ -31,21 +27,16 @@ MODEL_ARCHIVE_PATH = MODEL_PATH + ".keras"
 VOCAB_SIZE = 20000      
 MAX_LEN = 120
 EMBEDDING_DIM = 100    
-BATCH_SIZE = 64
+BATCH_SIZE = 32
 EPOCHS = 20
 LR = 1e-3
-PATIENCE = 4
-
-GLOVE_URL = "https://nlp.stanford.edu/data/glove.6B.zip"  
-GLOVE_DIM = EMBEDDING_DIM
-GLOVE_DIR = "glove"
+PATIENCE = 5
 
 TOKENIZER_SAVE = os.path.join(MODEL_DIR, "vectorizer_vocab.pkl")
 LABEL_ENCODER_SAVE = os.path.join(MODEL_DIR, "label_encoder.pkl")
 H5_CHECKPOINT = os.path.join(MODEL_DIR, MODEL_NAME + ".h5") 
 
 os.makedirs(MODEL_DIR, exist_ok=True)
-os.makedirs(GLOVE_DIR, exist_ok=True)
 
 def download_and_prepare_data():
     """
@@ -91,102 +82,29 @@ def clean_text_simple(s: str) -> str:
     s = re.sub(r'\s+', ' ', s).strip()
     return s
 
-def download_glove_if_needed(glove_dir=GLOVE_DIR, url=GLOVE_URL):
-    """Download Stanford GloVe (glove.6B.zip) and extract glove.6B.{dim}d.txt"""
-    zip_path = Path(glove_dir) / "glove.6B.zip"
-    target_file = Path(glove_dir) / f"glove.6B.{GLOVE_DIM}d.txt"
-    
-    if target_file.exists():
-        print("Found GloVe embeddings locally.")
-        return target_file
-
-    print("Downloading GloVe embeddings (this can be large ~800MB)...")
-    try:
-        resp = requests.get(url, stream=True, timeout=60)
-        resp.raise_for_status()
-        with open(zip_path, "wb") as fw:
-            for chunk in resp.iter_content(chunk_size=8192):
-                if chunk:
-                    fw.write(chunk)
-        print("Extracting GloVe...")
-        with zipfile.ZipFile(zip_path, 'r') as z:
-            target = f"glove.6B.{GLOVE_DIM}d.txt"
-            if target in z.namelist():
-                z.extract(target, path=glove_dir)
-                return target_file
-            else:
-                raise RuntimeError(f"{target} not found inside zip.")
-    except Exception as e:
-        print("Failed to download/extract GloVe:", e)
-        return None
-    finally:
-        
-        if zip_path.exists():
-            try:
-                os.remove(zip_path)
-            except Exception as e:
-                print(f"Warning: could not remove zip file {zip_path}: {e}")
-
-def build_embedding_matrix(vocab, glove_path, dim=GLOVE_DIM):
-    """
-    Create embedding matrix for the vocabulary using GloVe file at glove_path.
-    vocab: list-of-terms where index in list corresponds to vector index in embedding layer.
-    """
-    print("Building embedding matrix using GloVe...")
-    embeddings_index = {}
-    glove_path = Path(glove_path)
-    with glove_path.open("r", encoding="utf8", errors="ignore") as f:
-        for line in f:
-            parts = line.rstrip().split(" ")
-            word = parts[0]
-            try:
-                nums = np.asarray(parts[1:], dtype='float32')
-                if nums.shape[0] == dim: 
-                    embeddings_index[word] = nums
-            except ValueError:
-                continue 
-                
-    print(f"Loaded {len(embeddings_index)} glove vectors.")
-    
-    num_tokens = len(vocab)
-    embedding_matrix = np.random.normal(size=(num_tokens, dim)).astype(np.float32) * 0.01
-    
-    hits = 0
-    
-    for i, word in enumerate(vocab):
-        if i < 2: 
-            continue
-        vect = embeddings_index.get(word)
-        if vect is not None:
-            embedding_matrix[i] = vect
-            hits += 1
-            
-    print(f"Matched {hits} of {num_tokens - 2} vocab tokens to GloVe.")
-    return embedding_matrix
-
-def build_model(vocab_size, embedding_dim, max_len, num_classes, embedding_matrix):
+def build_model(vocab_size, embedding_dim, max_len, num_classes):
     """
     Model with TextVectorization pre-applied outside (we include embedding layer here).
-    Uses GloVe embeddings with fine-tuning enabled.
+    Uses trainable embeddings learned from scratch.
     """
     inp = layers.Input(shape=(max_len,), dtype="int32", name="input_tokens")
     
-    # ALWAYS use GloVe embeddings with fine-tuning
+    # Trainable embeddings from scratch
     emb_layer = layers.Embedding(
-        input_dim=embedding_matrix.shape[0],
-        output_dim=embedding_matrix.shape[1],
-        weights=[embedding_matrix],
+        input_dim=vocab_size,
+        output_dim=embedding_dim,
         input_length=max_len,
-        trainable=True,  # Fine-tune GloVe embeddings
+        trainable=True,  # Learn embeddings from data
         name="embedding"
     )(inp)
 
-    # SIMPLIFIED ARCHITECTURE
-    x = layers.Bidirectional(layers.LSTM(128, return_sequences=False, dropout=0.3))(emb_layer)
+    # Architecture
+    x = layers.Bidirectional(layers.LSTM(64, return_sequences=False, dropout=0.3, recurrent_dropout=0.3))(emb_layer)
     x = layers.BatchNormalization()(x)
     x = layers.Dense(128, activation="relu")(x)
     x = layers.Dropout(0.5)(x)
     x = layers.Dense(64, activation="relu")(x)
+    x = layers.Dropout(0.3)(x)
     out = layers.Dense(num_classes, activation="softmax", name="predictions")(x)
 
     model = models.Model(inputs=inp, outputs=out, name="emotion_bi_lstm")
@@ -209,7 +127,7 @@ def get_predictions_from_dataset(model, dataset):
 
 def evaluate_model(model, train_data, val_data, test_data, y_train, y_val, y_test, label_encoder):
     """
-    FIXED: Comprehensive evaluation with confusion matrix and metrics for all datasets
+    Comprehensive evaluation with confusion matrix and metrics for all datasets
     """
     results = {}
     
@@ -220,8 +138,10 @@ def evaluate_model(model, train_data, val_data, test_data, y_train, y_val, y_tes
     ]
     
     for dataset, true_labels, dataset_name in datasets:
-        
+       
         print(f"EVALUATION RESULTS FOR {dataset_name.upper()} SET")
+        
+        
         # Get predictions using the fixed function
         predictions, y_true = get_predictions_from_dataset(model, dataset)
         y_pred = np.argmax(predictions, axis=1)
@@ -295,7 +215,7 @@ def save_evaluation_results(results, output_dir):
     print(f"\nEvaluation results saved to: {output_dir}")
 
 def main():
-    print("Starting GloVe-only training pipeline...")
+    print("Starting training pipeline with LEARNED embeddings (no GloVe)...")
     base_path = download_and_prepare_data()
 
     df_train = load_txt_df(base_path / TRAIN_FILE)
@@ -304,7 +224,6 @@ def main():
 
     if df_train.empty or df_val.empty or df_test.empty:
         raise RuntimeError("One or more data splits could not be loaded. Place train.txt / val.txt / test.txt in current directory.")
-
 
     print(f"Training samples: {len(df_train)}")
     print(f"Validation samples: {len(df_val)}")
@@ -341,20 +260,20 @@ def main():
 
     
     vocab = vectorize_layer.get_vocabulary()
+    vocab_size = len(vocab)
     with open(TOKENIZER_SAVE, "wb") as f:
         pickle.dump(vocab, f)
-    print(f"Saved vectorizer vocab ({len(vocab)} tokens) to {TOKENIZER_SAVE}")
+    print(f"Saved vectorizer vocab ({vocab_size} tokens) to {TOKENIZER_SAVE}")
 
-    glove_txt = download_glove_if_needed()
-    if not glove_txt:
-        raise RuntimeError("GloVe download failed. Cannot proceed without embeddings.")
     
-    embedding_matrix = build_embedding_matrix(vocab, glove_txt, dim=GLOVE_DIM)
-    print("Using pre-trained GloVe embeddings with FINE-TUNING enabled.")
-
-   
-    model = build_model(vocab_size=len(vocab), embedding_dim=EMBEDDING_DIM, max_len=MAX_LEN,
-                        num_classes=num_classes, embedding_matrix=embedding_matrix)
+    print("Using trainable embeddings learned from scratch (no pre-trained embeddings)")
+    
+    model = build_model(
+        vocab_size=vocab_size, 
+        embedding_dim=EMBEDDING_DIM, 
+        max_len=MAX_LEN,
+        num_classes=num_classes
+    )
     model.summary()
 
     
@@ -441,6 +360,7 @@ def main():
     preds = model(x)
     pipeline_model = models.Model(inputs=string_input, outputs=preds, name="emotion_pipeline")
 
+    # Clean up old models
     if os.path.isdir(MODEL_PATH):
         try:
             shutil.rmtree(MODEL_PATH)
@@ -455,6 +375,7 @@ def main():
         except Exception as e:
             print(f"Warning: could not remove existing file {MODEL_ARCHIVE_PATH}: {e}")
 
+    # Save the model
     try:
         pipeline_model.save(MODEL_ARCHIVE_PATH, include_optimizer=False)
         print(f"Saved full pipeline as single-file Keras archive: {MODEL_ARCHIVE_PATH}")
@@ -467,16 +388,15 @@ def main():
         json.dump({k: [float(x) for x in v] for k, v in history.history.items()}, fh)
     print("Saved training history to", history_path)
 
-    
     print(f"Main inference artifact saved to: {MODEL_ARCHIVE_PATH}")
     print(f"Evaluation results saved to: {os.path.join(MODEL_DIR, 'evaluation')}")
     
-    
+    # Final performance summary
     train_acc = evaluation_results['train']['accuracy']
     val_acc = evaluation_results['val']['accuracy']
     test_acc = evaluation_results['test']['accuracy']
     
-    
+   
     print(f"Training Accuracy:   {train_acc:.4f}")
     print(f"Validation Accuracy: {val_acc:.4f}")
     print(f"Test Accuracy:       {test_acc:.4f}")
@@ -484,3 +404,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
